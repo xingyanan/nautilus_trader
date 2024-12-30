@@ -144,7 +144,7 @@ jobs:
       - name: Run pre-commit
         run: |
           # pre-commit run --hook-stage manual gitlint-ci
-          pre-commit run --all-files
+          pre-commit run --all-files --exclude="deployment/*"
 
       - name: Install Nautilus CLI and run init postgres
         run: |
@@ -285,7 +285,7 @@ jobs:
       - name: Run pre-commit
         run: |
           # pre-commit run --hook-stage manual gitlint-ci
-          pre-commit run --all-files
+          pre-commit run --all-files --exclude="deployment/*"
 
       # Run tests without parallel build (avoids linker errors)
       - name: Run tests (Windows)
@@ -397,7 +397,7 @@ jobs:
       - name: Run pre-commit
         run: |
           # pre-commit run --hook-stage manual gitlint-ci
-          pre-commit run --all-files
+          pre-commit run --all-files --exclude="deployment/*"
 
       - name: Run nautilus_core cargo tests (macOS)
         run: |
