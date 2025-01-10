@@ -52,7 +52,7 @@ jobs:
         with:
           file: ".docker/nautilus_trader.dockerfile"
           push: true
-          tags: ghcr.io/yananxing/nautilus_trader:latest
+          tags: ghcr.io/xingyanan/nautilus_trader:latest
           cache-from: type=gha
           cache-to: type=gha
       - name: Digest nautilus_trader image
