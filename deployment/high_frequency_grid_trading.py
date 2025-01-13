@@ -84,7 +84,7 @@ class HighFrequencyGridTradingConfig(StrategyConfig, frozen=True):
 
     instrument_id: InstrumentId
     max_trade_size: Decimal
-    min_seconds_between_triggers: NonNegativeFloat = 0.2
+    min_seconds_between_triggers: NonNegativeFloat = float(os.getenv('MIN_SECONDS_BETWEEN_TRIGGERS', 0.2))
     book_type: str = "L2_MBP"
     use_quote_ticks: bool = True
     subscribe_ticker: bool = True
@@ -97,7 +97,11 @@ class HighFrequencyGridTradingConfig(StrategyConfig, frozen=True):
     skew: PositiveFloat = float(os.getenv('SKEW', 1.2))
 
     looking_depth: PositiveFloat = float(os.getenv('LOOKING_DEPTH', 0.01))
-    adjusted_factor: PositiveFloat = float(os.getenv('ADJUSTED_FACTOR', 1.2))
+    spread_min_threshold: PositiveInt = int(os.getenv('SPREAD_MIN_THRESHOLD', 2))
+    spread_adjusted_factor: PositiveFloat = float(os.getenv('SPREAD_ADJUSTED_FACTOR', 1.2))
+    interval_adjusted_factor: PositiveFloat = float(os.getenv('INTERVAL_ADJUSTED_FACTOR', 1.2))
+
+    avoid_repeated_factor: PositiveFloat = float(os.getenv('AVOID_REPEATED_FACTOR', 3.0))
 
 
 class HighFrequencyGridTrading(Strategy):
@@ -216,7 +220,7 @@ class HighFrequencyGridTrading(Strategy):
             self.log.warning("No market yet")
             return
         
-        if (best_ask_price - best_bid_price) / self.tick_size > 2:
+        if (best_ask_price - best_bid_price) / self.tick_size > self.config.spread_min_threshold:
             self.cancel_all_orders(self.instrument.id)
             return 
 
@@ -241,8 +245,8 @@ class HighFrequencyGridTrading(Strategy):
         elif self.portfolio.is_net_long(self.instrument_id):
             pow_coef = np.maximum(0, float(net_position) - self.config.max_position / 2)
 
-        bid_half_spread *= Decimal(np.power(self.config.adjusted_factor, pow_coef / self.config.max_position))
-        ask_half_spread *= Decimal(np.power(1/self.config.adjusted_factor, pow_coef / self.config.max_position))
+        bid_half_spread *= Decimal(np.power(self.config.spread_adjusted_factor, pow_coef / self.config.max_position))
+        ask_half_spread *= Decimal(np.power(1/self.config.spread_adjusted_factor, pow_coef / self.config.max_position))
 
         # Since our price is skewed, it may cross the spread. To ensure market making and avoid crossing the spread,
         # limit the price to the best bid and best ask.
@@ -267,8 +271,8 @@ class HighFrequencyGridTrading(Strategy):
                 
                 if net_position != 0 and self.last_px is not None and self.last_order_side is not None:
                     if self.last_order_side == OrderSide.BUY and \
-                            bid_price > self.last_px - 3*half_spread and \
-                            bid_price < self.last_px + 3*half_spread:
+                            bid_price > self.last_px - self.config.avoid_repeated_factor * half_spread and \
+                            bid_price < self.last_px + self.config.avoid_repeated_factor * half_spread:
                         bid_price -= Decimal(coef) * grid_interval
                         continue
 
@@ -276,7 +280,7 @@ class HighFrequencyGridTrading(Strategy):
                 new_bid_orders[np.uint64(bid_price_tick)] = bid_price
                 
                 if net_position > self.config.max_position/2:
-                    bid_price -= Decimal(coef) * grid_interval * Decimal(np.power(self.config.adjusted_factor, pow_coef / self.config.max_position))
+                    bid_price -= Decimal(coef) * grid_interval * Decimal(np.power(self.config.interval_adjusted_factor, pow_coef / self.config.max_position))
                 else:
                     bid_price -= Decimal(coef) * grid_interval
 
@@ -287,8 +291,8 @@ class HighFrequencyGridTrading(Strategy):
                 
                 if net_position != 0 and self.last_px is not None and self.last_order_side is not None:
                     if self.last_order_side == OrderSide.SELL and \
-                            ask_price > self.last_px - 3*half_spread and \
-                            ask_price < self.last_px + 3*half_spread:
+                            ask_price > self.last_px - self.config.avoid_repeated_factor * half_spread and \
+                            ask_price < self.last_px + self.config.avoid_repeated_factor * half_spread:
                         ask_price += Decimal(coef) * grid_interval
                         continue
 
@@ -296,7 +300,7 @@ class HighFrequencyGridTrading(Strategy):
                 new_ask_orders[np.uint64(ask_price_tick)] = ask_price
                 
                 if net_position < -self.config.max_position/2:
-                    ask_price += Decimal(coef) * grid_interval * Decimal(np.power(1/self.config.adjusted_factor, pow_coef / self.config.max_position))
+                    ask_price += Decimal(coef) * grid_interval * Decimal(np.power(1/self.config.interval_adjusted_factor, pow_coef / self.config.max_position))
                 else:
                     ask_price += Decimal(coef) * grid_interval
         
