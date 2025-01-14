@@ -49,6 +49,7 @@ instrumentId = os.getenv('INSTRUMENT_ID', 'BNBUSDT-PERP.BINANCE')
 maxTradeSize = os.getenv('MAX_TRADE_SIZE', '0.1')
 
 inflightCheckRetries=int(os.getenv('INFLIGHT_CHECK_RETRY', 5))
+loggerLevel = os.getenv('LOGLEVEL', 'ERROR')
 
 # *** IT IS NOT INTENDED TO BE USED TO TRADE LIVE WITH REAL MONEY. ***
 
@@ -56,7 +57,7 @@ inflightCheckRetries=int(os.getenv('INFLIGHT_CHECK_RETRY', 5))
 config_node = TradingNodeConfig(
     trader_id=TraderId("Grid-Trading"),
     logging=LoggingConfig(
-        log_level="INFO",
+        log_level=loggerLevel
         # log_level_file="DEBUG",
         # log_file_format="json",
     ),
