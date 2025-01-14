@@ -271,8 +271,8 @@ class HighFrequencyGridTrading(Strategy):
                 
                 if net_position != 0 and self.last_px is not None and self.last_order_side is not None:
                     if self.last_order_side == OrderSide.BUY and \
-                            bid_price > self.last_px - self.config.avoid_repeated_factor * half_spread and \
-                            bid_price < self.last_px + self.config.avoid_repeated_factor * half_spread:
+                            bid_price > self.last_px - Decimal(self.config.avoid_repeated_factor) * half_spread and \
+                            bid_price < self.last_px + Decimal(self.config.avoid_repeated_factor) * half_spread:
                         bid_price -= Decimal(coef) * grid_interval
                         continue
 
@@ -291,8 +291,8 @@ class HighFrequencyGridTrading(Strategy):
                 
                 if net_position != 0 and self.last_px is not None and self.last_order_side is not None:
                     if self.last_order_side == OrderSide.SELL and \
-                            ask_price > self.last_px - self.config.avoid_repeated_factor * half_spread and \
-                            ask_price < self.last_px + self.config.avoid_repeated_factor * half_spread:
+                            ask_price > self.last_px - Decimal(self.config.avoid_repeated_factor) * half_spread and \
+                            ask_price < self.last_px + Decimal(self.config.avoid_repeated_factor) * half_spread:
                         ask_price += Decimal(coef) * grid_interval
                         continue
 
