@@ -102,6 +102,9 @@ class HighFrequencyGridTradingConfig(StrategyConfig, frozen=True):
     interval_adjusted_factor: PositiveFloat = float(os.getenv('INTERVAL_ADJUSTED_FACTOR', 1.2))
 
     avoid_repeated_factor: PositiveFloat = float(os.getenv('AVOID_REPEATED_FACTOR', 3.0))
+    
+    # 0-False 1-True
+    adjusted_spread_right_now: PositiveInt = int(os.getenv('ADJUSTED_SPREAD_RIGHT_NOW', 0))
 
 
 class HighFrequencyGridTrading(Strategy):
@@ -244,9 +247,13 @@ class HighFrequencyGridTrading(Strategy):
             pow_coef = np.minimum(0, float(net_position) + self.config.max_position / 2)
         elif self.portfolio.is_net_long(self.instrument_id):
             pow_coef = np.maximum(0, float(net_position) - self.config.max_position / 2)
-
-        bid_half_spread *= Decimal(np.power(self.config.spread_adjusted_factor, pow_coef / self.config.max_position))
-        ask_half_spread *= Decimal(np.power(1/self.config.spread_adjusted_factor, pow_coef / self.config.max_position))
+        
+        if self.config.adjusted_spread_right_now == 1:
+            bid_half_spread *= Decimal(np.power(self.config.spread_adjusted_factor, net_position / self.config.max_position))
+            ask_half_spread *= Decimal(np.power(1/self.config.spread_adjusted_factor, net_position / self.config.max_position))
+        else:
+            bid_half_spread *= Decimal(np.power(self.config.spread_adjusted_factor, pow_coef / self.config.max_position))
+            ask_half_spread *= Decimal(np.power(1/self.config.spread_adjusted_factor, pow_coef / self.config.max_position))
 
         # Since our price is skewed, it may cross the spread. To ensure market making and avoid crossing the spread,
         # limit the price to the best bid and best ask.
