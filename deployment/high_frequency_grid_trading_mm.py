@@ -13,6 +13,9 @@
 #  limitations under the License.
 # -------------------------------------------------------------------------------------------------
 
+from scipy import stats
+from numba import njit
+#from numba.typed import Dict
 import time
 import datetime
 import numpy as np
@@ -111,6 +114,49 @@ class HighFrequencyGridTradingConfig(StrategyConfig, frozen=True):
     mid_price_chg_length: PositiveInt = int(os.getenv('MID_PRICE_CHG_LENGTH', 300))
 
 
+@njit
+def linear_regression(x, y):
+    sx = np.sum(x)
+    sy = np.sum(y)
+    sx2 = np.sum(x ** 2)
+    sxy = np.sum(x * y)
+    w = len(x)
+    slope = (w * sxy - sx * sy) / (w * sx2 - sx**2)
+    intercept = (sy - slope * sx) / w
+    return slope, intercept
+
+@njit
+def compute_coeff(xi, gamma, delta, A, k):
+    inv_k = np.divide(1, k)
+    c1 = 1 / (xi * delta) * np.log(1 + xi * delta * inv_k)
+    c2 = np.sqrt(np.divide(gamma, 2 * A * delta * k) * ((1 + xi * delta * inv_k) ** (k / (xi * delta) + 1)))
+    return c1, c2
+
+@njit
+def measure_trading_intensity(order_arrival_depth, out):
+    max_tick = 0
+    for depth in order_arrival_depth:
+        if not np.isfinite(depth):
+            continue
+
+        # Sets the tick index to 0 for the nearest possible best price
+        # as the order arrival depth in ticks is measured from the mid-price
+        tick = round(depth / .5) - 1
+
+        # In a fast-moving market, buy trades can occur below the mid-price (and vice versa for sell trades)
+        # since the mid-price is measured in a previous time-step;
+        # however, to simplify the problem, we will exclude those cases.
+        if tick < 0 or tick >= len(out):
+            continue
+
+        # All of our possible quotes within the order arrival depth,
+        # excluding those at the same price, are considered executed.
+        out[:tick] += 1
+
+        max_tick = max(max_tick, tick)
+    return out[:max_tick]
+
+
 class HighFrequencyGridTrading(Strategy):
     """
     Cancels all orders and closes all positions on stop.
@@ -148,6 +194,37 @@ class HighFrequencyGridTrading(Strategy):
         self.mid_price_chg = deque(maxlen=config.mid_price_chg_length)
 
         self.t: int = 0
+
+        out_dtype = np.dtype([
+            ('half_spread_tick', 'f8'),
+            ('skew', 'f8'),
+            ('volatility', 'f8'),
+            ('A', 'f8'),
+            ('k', 'f8')
+        ])
+
+        self.arrival_depth = np.full(10_000_000, np.nan, np.float64)
+        self.mid_price_chg = np.full(10_000_000, np.nan, np.float64)
+        self.out = np.zeros(10_000_000, out_dtype)
+
+        self.prev_mid_price_tick = np.nan
+        self.mid_price_tick = np.nan
+
+        self.tmp = np.zeros(1_000, np.float64)
+        self.ticks = np.arange(len(self.tmp)) + 0.5
+
+        self.A = np.nan
+        self.k = np.nan
+        self.volatility = np.nan
+        self.gamma = 0.01
+        self.delta = 1
+        self.adj1 = 3.0
+        self.adj2 = 1.0
+
+        self.half_spread_tick = np.nan
+        self.skew = np.nan
+
+        self.trades = deque(maxlen=6_000)
 
     def on_start(self) -> None:
         """
@@ -193,7 +270,72 @@ class HighFrequencyGridTrading(Strategy):
         self.check_trigger()
 
     def on_trade_tick(self, tick: TradeTick) -> None:
-        pass
+        if np.isnan(self.mid_price_tick):
+            self.log.info("No mid_price_tick")
+            return
+
+        self.trades.append(tick)
+
+        depth = -np.inf
+        trade_price_tick = tick.price / self.tick_size
+
+        if tick.aggressor_side == OrderSide.BUY:
+            depth = np.nanmax([trade_price_tick - Decimal(self.mid_price_tick), depth])
+        else:
+            depth = np.nanmax([Decimal(self.mid_price_tick) - trade_price_tick, depth])
+        self.arrival_depth[self.t] = depth
+        self.glft_mm()
+
+    def glft_mm(self) -> None:
+        if np.isnan(self.prev_mid_price_tick):
+            self.prev_mid_price_tick = float(self.mid_price_tick)
+            self.log.info("No prev_mid_price_tick")
+            return
+
+        # Records the mid-price change for volatility calculation.
+        self.mid_price_chg[self.t] = Decimal(self.mid_price_tick) - Decimal(self.prev_mid_price_tick)
+
+        if self.t % self.config.volatility_cal_freq == 0:
+            # Window size is 10-minute.
+            if self.t >= 3_000 - 1:
+                # Calibrates A, k
+                self.tmp[:] = 0
+                lambda_ = measure_trading_intensity(self.arrival_depth[self.t + 1 - 3_000 : self.t + 1], self.tmp)
+                
+                if len(lambda_) > 2:
+                    lambda_ = lambda_[:70] / 300
+                    x = self.ticks[:len(lambda_)]
+                    y = np.log(lambda_)
+                    k_, logA = linear_regression(x, y)
+                    self.A = np.exp(logA)
+                    self.k = -k_
+
+                # Updates the volatility.
+                self.volatility = np.nanstd(self.mid_price_chg[self.t + 1 - 3_000 : self.t + 1]) * np.sqrt(5)
+            
+        self.t += 1
+        self.prev_mid_price_tick = float(self.mid_price_tick)
+
+        if self.t < 3_000:
+            return
+
+        # Computes bid price and ask price.
+        c1, c2 = compute_coeff(self.gamma, self.gamma, self.delta, self.A, self.k)
+        self.half_spread_tick = (c1 + self.delta / 2 * c2 * self.volatility)
+        self.skew = c2 * self.volatility
+
+        pct = stats.percentileofscore(self.arrival_depth[np.isfinite(self.arrival_depth)], self.half_spread_tick)
+        your_pct = 100 - pct
+        print('{:.4f}%'.format(your_pct))
+
+        self.half_spread_tick *= self.adj1
+        self.skew *= self.adj2
+
+        # inverse of percentile
+        pct = stats.percentileofscore(self.arrival_depth[np.isfinite(self.arrival_depth)], self.half_spread_tick)
+        your_pct = 100 - pct
+        print('adjust {:.4f}%'.format(your_pct))
+
 
     def on_order_book(self, order_book: OrderBook) -> None:
         """
@@ -239,7 +381,17 @@ class HighFrequencyGridTrading(Strategy):
         net_position = self.portfolio.net_position(self.instrument_id)
         mid_price = (best_bid_price + best_ask_price) / Decimal('2.0')
 
-        skew_position = np.power(self.config.skew, float(net_position) / self.config.max_position)
+        mid_price_tick = mid_price / self.tick_size
+        self.mid_price_tick = float(mid_price_tick)
+
+        if np.isnan(self.half_spread_tick) or np.isnan(self.skew):
+            self.log.info(
+                f"Waiting for half_spread and skew to warm up [{self.t}]",
+                color=LogColor.BLUE,
+            )
+            return
+
+        skew_position = np.power(self.config.skew, 1+float(net_position) / self.config.max_position)
         reservation_price = mid_price - self.tick_size * Decimal(skew_position)
         
         if self.prev_mid is None:
