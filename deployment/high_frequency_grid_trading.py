@@ -265,7 +265,7 @@ class HighFrequencyGridTrading(Strategy):
         
         volatility_chg_ratio = 1.0
         if len(self.volatility) > 1:
-            volatility_chg_ratio = np.maximum(volatility / (self.volatility[-2]+1e-5), 1.0)
+            volatility_chg_ratio = volatility / (self.volatility[-2]+1e-5)
         
         grid_interval *= self.tick_size
         bid_half_spread = self.tick_size * self.config.half_spread * volatility_chg_ratio
