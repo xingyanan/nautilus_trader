@@ -239,7 +239,7 @@ class HighFrequencyGridTrading(Strategy):
         net_position = self.portfolio.net_position(self.instrument_id)
         mid_price = (best_bid_price + best_ask_price) / Decimal('2.0')
 
-        skew_position = np.power(self.config.skew, float(net_position) / self.config.max_position)
+        skew_position = np.power(self.config.skew, 1 + float(net_position) / self.config.max_position)
         reservation_price = mid_price - self.tick_size * Decimal(skew_position)
         
         if self.prev_mid is None:
